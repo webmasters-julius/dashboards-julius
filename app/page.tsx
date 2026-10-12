@@ -10,20 +10,21 @@ export const dynamic = 'force-dynamic';
 export default async function Home({
   searchParams,
 }: {
-  searchParams: { q?: string; client?: string };
+  searchParams: Promise<{ q?: string; client?: string }>;
 }) {
+  const resolvedSearchParams = await searchParams;
   const user = await getTeamUser();
   if (!user) redirect('/login?error=domain');
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from('dashboards')
     .select('id, slug, title, client, visibility, version, size_bytes, created_by, created_by_email, updated_at')
     .order('updated_at', { ascending: false });
 
   const all = (data ?? []) as DashboardRow[];
-  const q = (searchParams.q ?? '').trim().toLowerCase();
-  const clientFilter = (searchParams.client ?? '').trim();
+  const q = (resolvedSearchParams.q ?? '').trim().toLowerCase();
+  const clientFilter = (resolvedSearchParams.client ?? '').trim();
 
   const clients = Array.from(new Set(all.map((d) => d.client).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b, 'es')
@@ -69,7 +70,7 @@ export default async function Home({
             className="input"
             type="search"
             name="q"
-            defaultValue={searchParams.q ?? ''}
+            defaultValue={resolvedSearchParams.q ?? ''}
             placeholder="Buscar por nombre, URL o cliente…"
           />
         </form>

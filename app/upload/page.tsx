@@ -6,17 +6,20 @@ import UploadForm, { type ExistingDashboard } from '@/components/UploadForm';
 
 export const dynamic = 'force-dynamic';
 
-export default async function UploadPage({ searchParams }: { searchParams: { slug?: string } }) {
+export default async function UploadPage({ searchParams }: { searchParams: Promise<{ slug?: string }> }) {
+  const resolvedSearchParams = await searchParams;
   const user = await getTeamUser();
   if (!user) redirect('/login?error=domain');
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data } = await supabase
     .from('dashboards')
     .select('slug, title, client, visibility, version');
 
   const existing = (data ?? []) as ExistingDashboard[];
-  const prefill = searchParams.slug ? existing.find((d) => d.slug === searchParams.slug) ?? null : null;
+  const prefill = resolvedSearchParams.slug
+    ? existing.find((d) => d.slug === resolvedSearchParams.slug) ?? null
+    : null;
 
   return (
     <div className="container">

@@ -8,19 +8,20 @@ export const dynamic = 'force-dynamic';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 /** Lista los links de cliente de un dashboard (sin tokens: solo se guardan hasheados). */
 export async function GET(_req: Request, { params }: Ctx) {
+  const { id } = await params;
   const user = await getTeamUser();
   if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-  if (!UUID_RE.test(params.id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
+  if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
 
   const admin = createAdminClient();
   const { data, error } = await admin
     .from('share_links')
     .select('id, label, expires_at, revoked_at, created_at, created_by_email')
-    .eq('dashboard_id', params.id)
+    .eq('dashboard_id', id)
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: 'No se pudieron leer los links' }, { status: 500 });
@@ -29,9 +30,10 @@ export async function GET(_req: Request, { params }: Ctx) {
 
 /** Crea un link de cliente. Devuelve la URL completa una sola vez. */
 export async function POST(req: Request, { params }: Ctx) {
+  const { id } = await params;
   const user = await getTeamUser();
   if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-  if (!UUID_RE.test(params.id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
+  if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
 
   let body: Record<string, unknown> = {};
   try {
@@ -64,7 +66,7 @@ export async function POST(req: Request, { params }: Ctx) {
   const { data: dashboard } = await admin
     .from('dashboards')
     .select('id, slug, visibility')
-    .eq('id', params.id)
+    .eq('id', id)
     .maybeSingle();
   if (!dashboard) return NextResponse.json({ error: 'No encontrado' }, { status: 404 });
 
@@ -96,9 +98,10 @@ export async function POST(req: Request, { params }: Ctx) {
 
 /** Revoca un link: DELETE ?linkId=<uuid> */
 export async function DELETE(req: Request, { params }: Ctx) {
+  const { id } = await params;
   const user = await getTeamUser();
   if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-  if (!UUID_RE.test(params.id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
+  if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
 
   const linkId = new URL(req.url).searchParams.get('linkId') ?? '';
   if (!UUID_RE.test(linkId)) return NextResponse.json({ error: 'linkId inválido' }, { status: 400 });
@@ -108,7 +111,7 @@ export async function DELETE(req: Request, { params }: Ctx) {
     .from('share_links')
     .update({ revoked_at: new Date().toISOString() })
     .eq('id', linkId)
-    .eq('dashboard_id', params.id)
+    .eq('dashboard_id', id)
     .is('revoked_at', null);
 
   if (error) return NextResponse.json({ error: 'No se pudo revocar' }, { status: 500 });

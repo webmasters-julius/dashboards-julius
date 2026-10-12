@@ -19,7 +19,7 @@ export function isAdminEmail(email: string | null | undefined): boolean {
 
 /** Devuelve el usuario autenticado solo si es del dominio del equipo; si no, null. */
 export async function getTeamUser(): Promise<User | null> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

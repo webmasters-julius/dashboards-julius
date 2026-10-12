@@ -20,8 +20,8 @@ export const dynamic = 'force-dynamic';
  * allow-same-origin, así que el documento corre en un origen opaco y no puede
  * leer cookies, sesión ni almacenamiento de esta app.
  */
-export async function GET(request: Request, { params }: { params: { slug: string } }) {
-  const { slug } = params;
+export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
   if (!isValidSlug(slug)) return notFound();
 
   const admin = createAdminClient();
@@ -38,7 +38,7 @@ export async function GET(request: Request, { params }: { params: { slug: string
   let allowed = dashboard.visibility === 'public';
 
   if (!allowed) {
-    const supabase = createClient();
+    const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -71,19 +71,18 @@ export async function GET(request: Request, { params }: { params: { slug: string
   const { data: file, error } = await admin.storage.from('dashboards').download(dashboard.current_path);
   if (error || !file) return notFound();
 
-  const isPublic = dashboard.visibility === 'public';
-
   // Streaming: evita el límite de 4.5 MB de respuesta no-stream en funciones de Vercel.
   return new Response(file.stream(), {
     status: 200,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy':
-        'sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
+        'sandbox allow-scripts allow-popups allow-downloads',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
       'X-Robots-Tag': 'noindex, nofollow',
-      'Cache-Control': isPublic ? 'public, max-age=0, s-maxage=60' : 'private, no-store',
+      // Never leave a public response in a shared cache after visibility is lowered.
+      'Cache-Control': 'private, no-store',
     },
   });
 }

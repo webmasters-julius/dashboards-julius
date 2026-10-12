@@ -8,13 +8,14 @@ export const dynamic = 'force-dynamic';
 const VISIBILITIES = ['team', 'link', 'public'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 /** Editar metadatos: título, cliente o visibilidad. */
 export async function PATCH(req: Request, { params }: Ctx) {
+  const { id } = await params;
   const user = await getTeamUser();
   if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-  if (!UUID_RE.test(params.id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
+  if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
 
   let body: Record<string, unknown>;
   try {
@@ -53,7 +54,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
   const { data, error } = await admin
     .from('dashboards')
     .update(patch)
-    .eq('id', params.id)
+    .eq('id', id)
     .select('id, slug, title, client, visibility')
     .maybeSingle();
 
@@ -65,17 +66,22 @@ export async function PATCH(req: Request, { params }: Ctx) {
 
 /** Borrar un dashboard con todas sus versiones. Solo su creador o un admin. */
 export async function DELETE(_req: Request, { params }: Ctx) {
+  const { id } = await params;
   const user = await getTeamUser();
   if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-  if (!UUID_RE.test(params.id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
+  if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 });
 
   const admin = createAdminClient();
 
-  const { data: dashboard } = await admin
+  const { data: dashboard, error: dashboardError } = await admin
     .from('dashboards')
     .select('id, created_by')
-    .eq('id', params.id)
+    .eq('id', id)
     .maybeSingle();
+  if (dashboardError) {
+    console.error('[dashboard delete] Dashboard lookup failed:', dashboardError);
+    return NextResponse.json({ error: 'No se pudo comprobar el dashboard.' }, { status: 500 });
+  }
   if (!dashboard) return NextResponse.json({ error: 'No encontrado' }, { status: 404 });
 
   const isOwner = dashboard.created_by === user.id;
@@ -86,18 +92,29 @@ export async function DELETE(_req: Request, { params }: Ctx) {
     );
   }
 
-  const { data: versions } = await admin
+  const { data: versions, error: versionsError } = await admin
     .from('dashboard_versions')
     .select('storage_path')
-    .eq('dashboard_id', params.id);
+    .eq('dashboard_id', id);
+  if (versionsError) {
+    console.error('[dashboard delete] Version lookup failed:', versionsError);
+    return NextResponse.json({ error: 'No se pudieron comprobar las versiones.' }, { status: 500 });
+  }
 
   const paths = (versions ?? []).map((v) => v.storage_path as string);
   if (paths.length > 0) {
-    await admin.storage.from('dashboards').remove(paths);
+    const { error: storageError } = await admin.storage.from('dashboards').remove(paths);
+    if (storageError) {
+      console.error('[dashboard delete] Storage removal failed:', storageError);
+      return NextResponse.json({ error: 'No se pudieron borrar todos los archivos del dashboard.' }, { status: 500 });
+    }
   }
 
-  const { error } = await admin.from('dashboards').delete().eq('id', params.id);
-  if (error) return NextResponse.json({ error: 'No se pudo borrar' }, { status: 500 });
+  const { error } = await admin.from('dashboards').delete().eq('id', id);
+  if (error) {
+    console.error('[dashboard delete] Database deletion failed:', error);
+    return NextResponse.json({ error: 'No se pudo borrar' }, { status: 500 });
+  }
 
   return NextResponse.json({ ok: true });
 }
