@@ -16,6 +16,19 @@ const PATH_RE = /^([a-z0-9]+(?:-[a-z0-9]+)*)\/(\d{13}-[a-z0-9]{6,12})\.html$/;
  * aquí se verifica que existe y se registra la versión del dashboard.
  */
 export async function POST(req: Request) {
+  try {
+    return await commitDashboard(req);
+  } catch (error) {
+    // Keep implementation details (including configuration errors) in Vercel logs.
+    console.error('[dashboard commit] Unexpected error:', error);
+    return NextResponse.json(
+      { error: 'Error interno al guardar el dashboard. Revisa los logs de Vercel.' },
+      { status: 500 }
+    );
+  }
+}
+
+async function commitDashboard(req: Request) {
   const user = await getTeamUser();
   if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
@@ -59,6 +72,7 @@ export async function POST(req: Request) {
 
   const { data: files, error: listError } = await bucket.list(slug, { search: fileName, limit: 5 });
   if (listError) {
+    console.error('[dashboard commit] Storage list failed:', listError);
     return NextResponse.json({ error: 'No se pudo verificar el archivo.' }, { status: 500 });
   }
   const file = files?.find((f) => f.name === fileName);
@@ -80,6 +94,7 @@ export async function POST(req: Request) {
     .eq('slug', slug)
     .maybeSingle();
   if (findError) {
+    console.error('[dashboard commit] Dashboard lookup failed:', findError);
     return NextResponse.json({ error: 'Error al consultar el dashboard.' }, { status: 500 });
   }
 
@@ -95,6 +110,7 @@ export async function POST(req: Request) {
       uploaded_by_email: email,
     });
     if (versionError) {
+      console.error('[dashboard commit] Version insert failed:', versionError);
       return NextResponse.json(
         { error: 'Otra subida se registró al mismo tiempo. Intenta de nuevo.' },
         { status: 409 }
@@ -114,6 +130,7 @@ export async function POST(req: Request) {
       })
       .eq('id', existing.id);
     if (updateError) {
+      console.error('[dashboard commit] Dashboard update failed:', updateError);
       return NextResponse.json({ error: 'No se pudo actualizar el dashboard.' }, { status: 500 });
     }
 
@@ -137,6 +154,7 @@ export async function POST(req: Request) {
     .single();
 
   if (insertError || !created) {
+    if (insertError) console.error('[dashboard commit] Dashboard insert failed:', insertError);
     const duplicate = insertError?.code === '23505';
     return NextResponse.json(
       { error: duplicate ? 'Esa URL ya existe. Intenta de nuevo.' : 'No se pudo crear el dashboard.' },
@@ -144,13 +162,20 @@ export async function POST(req: Request) {
     );
   }
 
-  await admin.from('dashboard_versions').insert({
+  const { error: initialVersionError } = await admin.from('dashboard_versions').insert({
     dashboard_id: created.id,
     version: 1,
     storage_path: path,
     size_bytes: size,
     uploaded_by_email: email,
   });
+
+  if (initialVersionError) {
+    console.error('[dashboard commit] Initial version insert failed:', initialVersionError);
+    // Remove the just-created row so a retry won't get stuck on the unique slug.
+    await admin.from('dashboards').delete().eq('id', created.id);
+    return NextResponse.json({ error: 'No se pudo registrar la versión del dashboard.' }, { status: 500 });
+  }
 
   return NextResponse.json({ ok: true, slug, version: 1, created: true });
 }
